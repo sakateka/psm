@@ -1,141 +1,284 @@
 const std = @import("std");
-const stdout = &std.io.getStdOut().writer();
+const tests = @import("tests.zig");
 
-fn listProc() void {}
+const fs = std.fs;
+const io = std.io;
+const mem = std.mem;
+const log = std.log;
+const fmt = std.fmt;
+const TokenIterator = mem.TokenIterator;
 
-pub fn main() anyerror!void {
-    std.log.info("All your codebase are belong to us.", .{});
+const stdout = &io.getStdOut().writer();
 
-    var dir = try std.fs.openDirAbsolute("/proc/", std.fs.Dir.OpenDirOptions{ .access_sub_paths = true, .iterate = true });
-    defer dir.close();
+const READ_BUF_SIZE: u16 = 4096;
 
-    std.log.info("{}", .{dir});
+//  Total       1GB  500MB 300MB 200MB   3MB/s  0        3MB/s    0       1MB/s
+//               v    v    ^
+//  NAME        RSS  Anon  File  Shmem  vRSS    vAnon    vFile    vShmem  dirty
+//  filefox     10MB 3MB   3MB   4MB     1MB/s  670KB/s  300KB/s  0       30KB/s
+//
+const ProgrammMap = std.StringHashMap(ProgrammStats);
+const OutputBuffer = std.ArrayList(u8);
 
-    var iter = dir.iterate();
-    while (try iter.next()) |entry| {
-        try stdout.print("{s}\n", .{entry.name});
-    }
+fn orderEntry(context: void, lhs: *ProgrammMap.Entry, rhs: *ProgrammMap.Entry) bool {
+    return lhs.value.curr.rss > rhs.value.curr.rss;
 }
 
-const expect = @import("std").testing.expect;
-test "while with continue expression" {
-    var sum: u8 = 0;
-    var i: u8 = 1;
-    while (i <= 10) : (i += 1) {
-        if (i == 2) continue;
-        sum += i;
-        std.log.warn("i={}, sum={}", .{ i, sum });
-    }
-    expect(sum == 53);
-}
+const Programm = struct {
+    count: u32 = 1,
+    rss: u64 = 0,
+    anon: ?u64 = null,
+    file: ?u64 = null,
+    shmem: ?u64 = null,
+};
 
-test "defer" {
-    var x: i16 = 5;
-    {
-        {
-            defer x += 2;
-            expect(x == 5);
+const ProgrammStats = struct {
+    iteration: u32 = 0,
+    curr: Programm,
+    prev: Programm,
+};
+
+const PSM = struct {
+    alloc: *mem.Allocator,
+    topN: u32 = 25,
+    iteration: u32 = 0,
+    total: Programm,
+    programms: ProgrammMap,
+    _keys: std.BufMap,
+    _obsolete: std.BufSet,
+    _entries: std.ArrayList(*ProgrammMap.Entry),
+
+    out: OutputBuffer,
+
+    fn init(allocator: *mem.Allocator) PSM {
+        return PSM{
+            .alloc = allocator,
+            .total = Programm{},
+            .programms = ProgrammMap.init(allocator),
+            ._keys = std.BufMap.init(allocator),
+            ._obsolete = std.BufSet.init(allocator),
+            ._entries = std.ArrayList(*ProgrammMap.Entry).init(allocator),
+
+            .out = OutputBuffer.init(allocator),
+        };
+    }
+
+    fn addProcess(self: *PSM, pid: u32) anyerror!void {
+        var linkBuf: [255]u8 = undefined;
+        const name = try self.resolveProgrammName(pid, &linkBuf);
+        const prog = try self.readSmapsRollup(pid);
+
+        if (self._keys.get(name) == null) {
+            try self._keys.set(name, name);
         }
-        defer x += 2;
-        expect(x == 7);
-        x += 1;
-        expect(x == 8);
+        const get_or_put = try self.programms.getOrPut(self._keys.get(name).?);
+        const v = &get_or_put.entry.value;
+        if (get_or_put.found_existing and v.iteration > 0) {
+            v.curr.count += 1;
+            v.curr.rss += prog.rss;
+            if (prog.anon) |m| v.curr.anon = m + (v.curr.anon orelse 0);
+            if (prog.file) |m| v.curr.file = m + (v.curr.file orelse 0);
+            if (prog.shmem) |m| v.curr.shmem = m + (v.curr.shmem orelse 0);
+        } else {
+            v.curr = prog;
+            v.prev = prog;
+        }
+        // and set iteration
+        v.iteration = self.iteration;
     }
-    expect(x == 10);
-}
 
-fn increment(num: *u8) void {
-    num.* += 1;
-}
+    fn resolveProgrammName(self: *PSM, pid: u32, linkBuf: []u8) ![]u8 {
+        var buf: [20]u8 = undefined;
+        const path = try fmt.bufPrint(&buf, "/proc/{d}/exe", .{pid});
+        var link = try std.os.readlink(path, linkBuf);
+        if (mem.lastIndexOfScalar(u8, link, '/')) |index| {
+            link = link[index + 1 ..];
+        }
+        if (link.len > 10 and mem.eql(u8, link[link.len - 10 ..], " (deleted)")) {
+            link = link[0 .. link.len - 10];
+        }
+        return link;
+    }
 
-test "pointers" {
-    var x: u8 = 1;
-    increment(&x);
-    expect(x == 2);
-}
+    fn readSmapsRollup(self: *PSM, pid: u32) !Programm {
+        var buf: [29]u8 = undefined;
+        const path = try fmt.bufPrint(&buf, "/proc/{d}/smaps_rollup", .{pid});
 
-const Suit = enum {
-    clubs,
-    spades,
-    diamonds,
-    hearts,
-    pub fn isClubs(self: Suit) bool {
-        return self == Suit.clubs;
+        const opts = fs.File.OpenFlags{ .read = true };
+        const file = try fs.openFileAbsolute(path, opts);
+        defer file.close();
+
+        var buffer: [READ_BUF_SIZE]u8 = undefined;
+        const size = try file.readAll(&buffer);
+        if (size == 0) return error.UnexpectedEof;
+
+        const start = mem.indexOf(u8, &buffer, "Pss:");
+        if (start == null) return error.UnexpectedEof;
+        var bufferPssSlice = buffer[start.? + 4 ..];
+
+        var p = Programm{};
+        var iter = mem.tokenize(bufferPssSlice, "\n ");
+        p.rss = try self.parseNextTokenAsU64(&iter);
+        self.assertNextSmapsField(&iter, "kB");
+
+        if (iter.next()) |token| {
+            if (mem.eql(u8, token, "Pss_Anon:")) {
+                p.anon = try self.parseNextTokenAsU64(&iter);
+                self.assertNextSmapsField(&iter, "kB");
+                self.assertNextSmapsField(&iter, "Pss_File:");
+                p.file = try self.parseNextTokenAsU64(&iter);
+                self.assertNextSmapsField(&iter, "kB");
+                self.assertNextSmapsField(&iter, "Pss_Shmem:");
+                p.shmem = try self.parseNextTokenAsU64(&iter);
+                self.assertNextSmapsField(&iter, "kB");
+            }
+        }
+        return p;
+    }
+
+    fn assertNextSmapsField(self: *PSM, iter: *TokenIterator, field: []const u8) void {
+        const nextField = iter.next().?;
+        if (!mem.eql(u8, nextField, field)) {
+            log.err("expected '{s}', buf found '{s}'", .{ field, nextField });
+            unreachable;
+        }
+    }
+
+    fn parseNextTokenAsU64(self: *PSM, iter: *TokenIterator) !u64 {
+        if (iter.next()) |token| {
+            return try fmt.parseInt(u64, token, 10);
+        }
+        return error.UnexpectedEof;
+    }
+
+    fn collectStats(self: *PSM) !void {
+        const opts = fs.Dir.OpenDirOptions{ .access_sub_paths = true, .iterate = true };
+        var dir = try fs.openDirAbsolute("/proc/", opts);
+        defer dir.close();
+
+        var iter = dir.iterate();
+        while (try iter.next()) |entry| {
+            if (!(entry.kind == .Directory)) continue;
+            const pid = fmt.parseInt(u32, entry.name, 10) catch |err| {
+                continue;
+            };
+            self.addProcess(pid) catch |err| {
+                switch (err) {
+                    error.OpenError => continue,
+                    error.FileNotFound => continue,
+                    error.InvalidCharacter => continue,
+                    error.UnexpectedEof => continue,
+                    error.AccessDenied => continue,
+                    else => |e| return e,
+                }
+            };
+        }
+    }
+    fn rotateStats(self: *PSM) void {
+        self.iteration += 1;
+        var programmsIterator = self.programms.iterator();
+        while (programmsIterator.next()) |entry| {
+            entry.value.iteration = 0;
+            entry.value.prev = entry.value.curr;
+        }
+    }
+
+    fn aggregateStats(self: *PSM) anyerror!void {
+        self._obsolete.hash_map.clearRetainingCapacity();
+        try self._entries.resize(0);
+
+        var programmsIterator = self.programms.iterator();
+        while (programmsIterator.next()) |entry| {
+            if (self.iteration != entry.value.iteration) {
+                try self._obsolete.put(entry.key);
+            } else {
+                try self._entries.append(entry);
+            }
+        }
+        std.sort.sort(*ProgrammMap.Entry, self._entries.items, {}, orderEntry);
+
+        var iter = self._obsolete.iterator();
+        while (iter.next()) |entry| {
+            self.programms.removeAssertDiscard(entry.key);
+            self._keys.delete(entry.key);
+        }
+    }
+
+    fn printStats(self: *PSM) !void {
+        try self.out.writer().print(
+            "{s: <20} {s: <4} {s: <10} {s: <10} {s: <10} {s: <10}\n",
+            .{ "name", "count", "RSS", "Anon", "File", "Shmem" },
+        );
+
+        const nameLen = 18;
+
+        const n = std.math.min(self.topN, self._entries.items.len);
+        var idx: usize = 0;
+        while (idx < n) : (idx += 1) {
+            const v = self._entries.items[idx].value.curr;
+            const k = self._entries.items[idx].key;
+
+            const nameEnd = std.math.min(k.len, nameLen);
+            const nameEndChar: u8 = if (k.len > (nameEnd + 1)) '~' else ' ';
+
+            var nameBuf: [nameLen + 1]u8 = undefined;
+            const name = try fmt.bufPrint(
+                &nameBuf,
+                "{s}{c}",
+                .{ k[0..nameEnd], nameEndChar },
+            );
+
+            try self.out.writer().print(
+                "{s: <20} {d: <4} {d: <10} {d: <10} {d: <10} {d: <10}\n",
+                .{ name, v.count, v.rss, v.anon, v.file, v.shmem },
+            );
+        }
+        try stdout.writeAll(self.out.items);
+        try self.out.resize(0);
+    }
+
+    fn cleanupScreen(self: *PSM) !void {
+        const escape = "\x1b";
+        const cursorUp = escape ++ "[1A";
+        const clearLine = escape ++ "[2K\r";
+        const cursorUpAndClearLine = cursorUp ++ clearLine;
+
+        var n: i64 = self.topN;
+        while (n >= 0) : (n -= 1) {
+            _ = try self.out.writer().writeAll(cursorUpAndClearLine);
+        }
+    }
+
+    fn deinit(self: *PSM) void {
+        self.programms.deinit();
+        self._keys.deinit();
+        self._obsolete.deinit();
+        self._entries.deinit();
+
+        self.out.deinit();
     }
 };
 
-test "enum method" {
-    expect(Suit.spades.isClubs() == Suit.isClubs(.spades));
-}
+pub fn main() !void {
+    tests.codebaseOwnership();
 
-const Stuff = struct {
-    x: i32,
-    y: i32,
-    fn swap(self: *Stuff) void {
-        const tmp = self.x;
-        self.x = self.y;
-        self.y = tmp;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked) unreachable;
     }
-};
 
-test "automatic dereference" {
-    var thing = Stuff{ .x = 10, .y = 20 };
-    thing.swap();
-    expect(thing.x == 20);
-    expect(thing.y == 10);
-}
+    var psm = PSM.init(&gpa.allocator);
+    defer psm.deinit();
 
-test "simple union" {
-    const Payload = union {
-        int: i64,
-        float: f64,
-        bool: bool,
-    };
-
-    var payload = Payload{ .int = 1234 };
-    std.log.warn("{s}", .{payload});
-}
-
-test "switch on tagged union" {
-    const Tagged = union(enum) { a: u8, b: f32, c: bool };
-    var value = Tagged{ .b = 1.5 };
-    switch (value) {
-        .a => |*byte| byte.* += 1,
-        .b => |*float| float.* *= 2,
-        .c => |*b| b.* = !b.*,
-    }
-    expect(value.b == 3);
-}
-
-test "well defined overflow" {
-    var a: u8 = 255;
-    a +%= 1;
-    expect(a == 0);
-}
-
-test "int-float conversion" {
-    const a: i32 = 9;
-    const b = @intToFloat(f32, a);
-    const c = @floatToInt(i32, b);
-    expect(c == a);
-}
-
-var numbers_left2: u32 = undefined;
-
-fn eventuallyErrorSequence() !u32 {
-    return if (numbers_left2 == 0) error.ReachedZero else blk: {
-        numbers_left2 -= 1;
-        break :blk numbers_left2;
-    };
-}
-
-test "while error union capture" {
-    var sum: u32 = 0;
-    numbers_left2 = 3;
-    while (eventuallyErrorSequence()) |value| {
-        sum += value;
-    } else |err| {
-        std.log.warn("Error captured {s}", .{err});
-        expect(err == error.ReachedZero);
+    while (true) {
+        psm.rotateStats();
+        try psm.collectStats();
+        try psm.aggregateStats();
+        if (psm.iteration > 1) {
+            try psm.cleanupScreen();
+        }
+        try psm.printStats();
+        std.time.sleep(5 * std.time.ns_per_s);
     }
 }
