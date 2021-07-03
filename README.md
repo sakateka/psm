@@ -7,3 +7,5 @@ The last step is to pretty print the resulting numbers.
 
 # screenshot
 ![image](https://user-images.githubusercontent.com/2256154/124362049-f1659380-dc5c-11eb-87e5-73e793888fa2.png)
+
+###### Note: tests.zig - is just a copy paste in the course of my reading https://ziglearn.org
