@@ -159,10 +159,8 @@ const PSM = struct {
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (!(entry.kind == .Directory)) continue;
-            const pid = fmt.parseInt(u32, entry.name, 10) catch |err| {
-                std.log.err("Failed to parse pid: {s}", .{err});
-                continue;
-            };
+            const pid = fmt.parseInt(u32, entry.name, 10) catch continue;
+
             self.addProcess(pid) catch |err| {
                 switch (err) {
                     error.OpenError => continue,
