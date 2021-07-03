@@ -20,12 +20,8 @@ const READ_BUF_SIZE: u16 = 4096;
 const ProgrammMap = std.StringHashMap(ProgrammStats);
 const OutputBuffer = std.ArrayList(u8);
 
-fn orderEntry(_: void, lhs: ProgrammMap.Entry, rhs: ProgrammMap.Entry) bool {
-    return lhs.value_ptr.curr.rss > rhs.value_ptr.curr.rss;
-}
-
 const Programm = struct {
-    count: u32 = 1,
+    count: u32 = 0,
     rss: u64 = 0,
     anon: ?u64 = null,
     file: ?u64 = null,
@@ -37,6 +33,21 @@ const ProgrammStats = struct {
     curr: Programm,
     prev: Programm,
 };
+
+fn orderEntry(_: void, lhs: ProgrammMap.Entry, rhs: ProgrammMap.Entry) bool {
+    return lhs.value_ptr.curr.rss > rhs.value_ptr.curr.rss;
+}
+
+fn formatOptionalSize(sizeOptional: ?u64) [10]u8 {
+    var buf: [10]u8 = (" " ** 10).*;
+    if (sizeOptional) |size| {
+        _ = fmt.bufPrint(&buf, "{: <10.1}", .{fmt.fmtIntSizeBin(size * 1024)}) catch {
+            return "overflow! ".*;
+        };
+        return buf;
+    }
+    return "N/A       ".*;
+}
 
 const PSM = struct {
     alloc: *mem.Allocator,
@@ -64,7 +75,7 @@ const PSM = struct {
     }
 
     fn addProcess(self: *PSM, pid: u32) anyerror!void {
-        var linkBuf: [255]u8 = undefined;
+        var linkBuf: [1024]u8 = undefined;
         const name = try self.resolveProgrammName(pid, &linkBuf);
         const prog = try self.readSmapsRollup(pid);
 
@@ -73,15 +84,25 @@ const PSM = struct {
         }
         const get_or_put = try self.programms.getOrPut(self._keys.get(name).?);
         const v = get_or_put.value_ptr;
-        if (get_or_put.found_existing and v.iteration > 0) {
-            v.curr.count += 1;
-            v.curr.rss += prog.rss;
-            if (prog.anon) |m| v.curr.anon = m + (v.curr.anon orelse 0);
-            if (prog.file) |m| v.curr.file = m + (v.curr.file orelse 0);
-            if (prog.shmem) |m| v.curr.shmem = m + (v.curr.shmem orelse 0);
-        } else {
-            v.curr = prog;
-            v.prev = prog;
+        if (!get_or_put.found_existing) {
+            v.curr = Programm{};
+            v.prev = Programm{};
+        }
+
+        v.curr.count += 1;
+        v.curr.rss += prog.rss;
+        self.total.rss += prog.rss;
+        if (prog.anon) |m| {
+            v.curr.anon = m + (v.curr.anon orelse 0);
+            self.total.anon = m + (self.total.anon orelse 0);
+        }
+        if (prog.file) |m| {
+            v.curr.file = m + (v.curr.file orelse 0);
+            self.total.file = m + (self.total.file orelse 0);
+        }
+        if (prog.shmem) |m| {
+            v.curr.shmem = m + (v.curr.shmem orelse 0);
+            self.total.shmem = m + (self.total.shmem orelse 0);
         }
         // and set iteration
         v.iteration = self.iteration;
@@ -174,11 +195,12 @@ const PSM = struct {
         }
     }
     fn rotateStats(self: *PSM) void {
+        self.total = Programm{};
         self.iteration += 1;
         var programmsIterator = self.programms.valueIterator();
         while (programmsIterator.next()) |v| {
-            v.iteration = 0;
             v.prev = v.curr;
+            v.curr = Programm{};
         }
     }
 
@@ -205,8 +227,19 @@ const PSM = struct {
 
     fn printStats(self: *PSM) !void {
         try self.out.writer().print(
-            "{s: <20} {s: <4} {s: <10} {s: <10} {s: <10} {s: <10}\n",
-            .{ "name", "count", "RSS", "Anon", "File", "Shmem" },
+            "{d: <20} {s: <5} {s: <10} {s: <10} {s: <10} {s: <10}\n",
+            .{
+                std.time.timestamp(),
+                "total",
+                formatOptionalSize(self.total.rss),
+                formatOptionalSize(self.total.anon),
+                formatOptionalSize(self.total.file),
+                formatOptionalSize(self.total.shmem),
+            },
+        );
+        try self.out.writer().print(
+            "{s: <20} {s: <5} {s: <10} {s: <10} {s: <10} {s: <10}\n",
+            .{ "NAME", "COUNT", "RSS", "ANON", "FILE", "SHMEM" },
         );
 
         const nameLen = 18;
@@ -228,8 +261,15 @@ const PSM = struct {
             );
 
             try self.out.writer().print(
-                "{s: <20} {d: <4} {d: <10} {d: <10} {d: <10} {d: <10}\n",
-                .{ name, v.count, v.rss, v.anon, v.file, v.shmem },
+                "{s: <20} {d: <5} {s: <10.1} {s: <10} {s: <10} {s: <10}\n",
+                .{
+                    name,
+                    v.count,
+                    formatOptionalSize(v.rss),
+                    formatOptionalSize(v.anon),
+                    formatOptionalSize(v.file),
+                    formatOptionalSize(v.shmem),
+                },
             );
         }
         try stdout.writeAll(self.out.items);
@@ -242,7 +282,7 @@ const PSM = struct {
         const clearLine = escape ++ "[2K\r";
         const cursorUpAndClearLine = cursorUp ++ clearLine;
 
-        var n: i64 = self.topN;
+        var n: i64 = self.topN + 1; // +1 -> total
         while (n >= 0) : (n -= 1) {
             _ = try self.out.writer().writeAll(cursorUpAndClearLine);
         }

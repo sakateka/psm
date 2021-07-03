@@ -14,6 +14,7 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("psm", "src/main.zig");
     // exe.addPackagePath("tests", "src/tests.zig");
     exe.setTarget(target);
+    // exe.linkLibC();
     exe.setBuildMode(mode);
     exe.install();
 
