@@ -238,6 +238,7 @@ test "tuple" {
 test "sentinel terminated slicing" {
     var x = [_:0]u8{255} ** 2 ++ [_]u8{254};
     const y = x[0..2 :254];
+    _ = y;
 }
 
 fn nextLine(reader: anytype, buffer: []u8) !?[]const u8 {
@@ -347,9 +348,13 @@ test "random numbers" {
     const rand = &prng.random;
 
     const a = rand.float(f32);
+    _ = a;
     const b = rand.boolean();
+    _ = b;
     const c = rand.int(u8);
+    _ = c;
     const d = rand.intRangeAtMost(u8, 0, 255);
+    _ = d;
 }
 
 test "stack" {

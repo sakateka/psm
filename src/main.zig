@@ -20,8 +20,8 @@ const READ_BUF_SIZE: u16 = 4096;
 const ProgrammMap = std.StringHashMap(ProgrammStats);
 const OutputBuffer = std.ArrayList(u8);
 
-fn orderEntry(context: void, lhs: *ProgrammMap.Entry, rhs: *ProgrammMap.Entry) bool {
-    return lhs.value.curr.rss > rhs.value.curr.rss;
+fn orderEntry(_: void, lhs: ProgrammMap.Entry, rhs: ProgrammMap.Entry) bool {
+    return lhs.value_ptr.curr.rss > rhs.value_ptr.curr.rss;
 }
 
 const Programm = struct {
@@ -46,7 +46,7 @@ const PSM = struct {
     programms: ProgrammMap,
     _keys: std.BufMap,
     _obsolete: std.BufSet,
-    _entries: std.ArrayList(*ProgrammMap.Entry),
+    _entries: std.ArrayList(ProgrammMap.Entry),
 
     out: OutputBuffer,
 
@@ -57,7 +57,7 @@ const PSM = struct {
             .programms = ProgrammMap.init(allocator),
             ._keys = std.BufMap.init(allocator),
             ._obsolete = std.BufSet.init(allocator),
-            ._entries = std.ArrayList(*ProgrammMap.Entry).init(allocator),
+            ._entries = std.ArrayList(ProgrammMap.Entry).init(allocator),
 
             .out = OutputBuffer.init(allocator),
         };
@@ -69,10 +69,10 @@ const PSM = struct {
         const prog = try self.readSmapsRollup(pid);
 
         if (self._keys.get(name) == null) {
-            try self._keys.set(name, name);
+            try self._keys.put(name, name);
         }
         const get_or_put = try self.programms.getOrPut(self._keys.get(name).?);
-        const v = &get_or_put.entry.value;
+        const v = get_or_put.value_ptr;
         if (get_or_put.found_existing and v.iteration > 0) {
             v.curr.count += 1;
             v.curr.rss += prog.rss;
@@ -87,7 +87,7 @@ const PSM = struct {
         v.iteration = self.iteration;
     }
 
-    fn resolveProgrammName(self: *PSM, pid: u32, linkBuf: []u8) ![]u8 {
+    fn resolveProgrammName(_: *PSM, pid: u32, linkBuf: []u8) ![]u8 {
         var buf: [20]u8 = undefined;
         const path = try fmt.bufPrint(&buf, "/proc/{d}/exe", .{pid});
         var link = try std.os.readlink(path, linkBuf);
@@ -136,7 +136,7 @@ const PSM = struct {
         return p;
     }
 
-    fn assertNextSmapsField(self: *PSM, iter: *TokenIterator, field: []const u8) void {
+    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator, field: []const u8) void {
         const nextField = iter.next().?;
         if (!mem.eql(u8, nextField, field)) {
             log.err("expected '{s}', buf found '{s}'", .{ field, nextField });
@@ -144,7 +144,7 @@ const PSM = struct {
         }
     }
 
-    fn parseNextTokenAsU64(self: *PSM, iter: *TokenIterator) !u64 {
+    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator) !u64 {
         if (iter.next()) |token| {
             return try fmt.parseInt(u64, token, 10);
         }
@@ -160,6 +160,7 @@ const PSM = struct {
         while (try iter.next()) |entry| {
             if (!(entry.kind == .Directory)) continue;
             const pid = fmt.parseInt(u32, entry.name, 10) catch |err| {
+                std.log.err("Failed to parse pid: {s}", .{err});
                 continue;
             };
             self.addProcess(pid) catch |err| {
@@ -176,10 +177,10 @@ const PSM = struct {
     }
     fn rotateStats(self: *PSM) void {
         self.iteration += 1;
-        var programmsIterator = self.programms.iterator();
-        while (programmsIterator.next()) |entry| {
-            entry.value.iteration = 0;
-            entry.value.prev = entry.value.curr;
+        var programmsIterator = self.programms.valueIterator();
+        while (programmsIterator.next()) |v| {
+            v.iteration = 0;
+            v.prev = v.curr;
         }
     }
 
@@ -189,18 +190,18 @@ const PSM = struct {
 
         var programmsIterator = self.programms.iterator();
         while (programmsIterator.next()) |entry| {
-            if (self.iteration != entry.value.iteration) {
-                try self._obsolete.put(entry.key);
+            if (self.iteration != entry.value_ptr.iteration) {
+                try self._obsolete.insert(entry.key_ptr.*);
             } else {
                 try self._entries.append(entry);
             }
         }
-        std.sort.sort(*ProgrammMap.Entry, self._entries.items, {}, orderEntry);
+        std.sort.sort(ProgrammMap.Entry, self._entries.items, {}, orderEntry);
 
         var iter = self._obsolete.iterator();
-        while (iter.next()) |entry| {
-            self.programms.removeAssertDiscard(entry.key);
-            self._keys.delete(entry.key);
+        while (iter.next()) |key| {
+            _ = self.programms.remove(key.*);
+            self._keys.remove(key.*);
         }
     }
 
@@ -215,8 +216,8 @@ const PSM = struct {
         const n = std.math.min(self.topN, self._entries.items.len);
         var idx: usize = 0;
         while (idx < n) : (idx += 1) {
-            const v = self._entries.items[idx].value.curr;
-            const k = self._entries.items[idx].key;
+            const v = self._entries.items[idx].value_ptr.curr;
+            const k = self._entries.items[idx].key_ptr.*;
 
             const nameEnd = std.math.min(k.len, nameLen);
             const nameEndChar: u8 = if (k.len > (nameEnd + 1)) '~' else ' ';
