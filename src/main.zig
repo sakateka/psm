@@ -138,7 +138,7 @@ const PSM = struct {
         var bufferPssSlice = buffer[start.? + 4 ..];
 
         var p = Programm{};
-        var iter = mem.tokenize(bufferPssSlice, "\n ");
+        var iter = mem.tokenize(u8, bufferPssSlice, "\n ");
         p.rss = try self.parseNextTokenAsU64(&iter);
         self.assertNextSmapsField(&iter, "kB");
 
@@ -157,7 +157,7 @@ const PSM = struct {
         return p;
     }
 
-    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator, field: []const u8) void {
+    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator(u8), field: []const u8) void {
         const nextField = iter.next().?;
         if (!mem.eql(u8, nextField, field)) {
             log.err("expected '{s}', buf found '{s}'", .{ field, nextField });
@@ -165,7 +165,7 @@ const PSM = struct {
         }
     }
 
-    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator) !u64 {
+    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator(u8)) !u64 {
         if (iter.next()) |token| {
             return try fmt.parseInt(u64, token, 10);
         }
