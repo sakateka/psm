@@ -14,7 +14,7 @@ test "while with continue expression" {
         sum += i;
         std.log.warn("i={}, sum={}", .{ i, sum });
     }
-    expect(sum == 53);
+    try expect(sum == 53);
 }
 
 test "defer" {
@@ -22,14 +22,14 @@ test "defer" {
     {
         {
             defer x += 2;
-            expect(x == 5);
+            try expect(x == 5);
         }
         defer x += 2;
-        expect(x == 7);
+        try expect(x == 7);
         x += 1;
-        expect(x == 8);
+        try expect(x == 8);
     }
-    expect(x == 10);
+    try expect(x == 10);
 }
 
 fn increment(num: *u8) void {
@@ -39,7 +39,7 @@ fn increment(num: *u8) void {
 test "pointers" {
     var x: u8 = 1;
     increment(&x);
-    expect(x == 2);
+    try expect(x == 2);
 }
 
 const Suit = enum {
@@ -53,7 +53,7 @@ const Suit = enum {
 };
 
 test "enum method" {
-    expect(Suit.spades.isClubs() == Suit.isClubs(.spades));
+    try expect(Suit.spades.isClubs() == Suit.isClubs(.spades));
 }
 
 const Stuff = struct {
@@ -69,8 +69,8 @@ const Stuff = struct {
 test "automatic dereference" {
     var thing = Stuff{ .x = 10, .y = 20 };
     thing.swap();
-    expect(thing.x == 20);
-    expect(thing.y == 10);
+    try expect(thing.x == 20);
+    try expect(thing.y == 10);
 }
 
 test "simple union" {
@@ -92,20 +92,20 @@ test "switch on tagged union" {
         .b => |*float| float.* *= 2,
         .c => |*b| b.* = !b.*,
     }
-    expect(value.b == 3);
+    try expect(value.b == 3);
 }
 
 test "well defined overflow" {
     var a: u8 = 255;
     a +%= 1;
-    expect(a == 0);
+    try expect(a == 0);
 }
 
 test "int-float conversion" {
     const a: i32 = 9;
     const b = @intToFloat(f32, a);
     const c = @floatToInt(i32, b);
-    expect(c == a);
+    try expect(c == a);
 }
 
 var numbers_left2: u32 = undefined;
@@ -124,7 +124,7 @@ test "while error union capture" {
         sum += value;
     } else |err| {
         std.log.warn("Error captured {s}", .{err});
-        expect(err == error.ReachedZero);
+        try expect(err == error.ReachedZero);
     }
 }
 
@@ -137,7 +137,7 @@ const AllocationError = error{OutOfMemory};
 
 test "coerce error from a subset to a superset" {
     const err: FileOpenError = AllocationError.OutOfMemory;
-    expect(err == FileOpenError.OutOfMemory);
+    try expect(err == FileOpenError.OutOfMemory);
 }
 
 const Info = union(enum) {
@@ -151,25 +151,25 @@ test "switch capture" {
     var b = Info{ .a = 10 };
     const x = switch (b) {
         .b => |str| blk: {
-            expect(@TypeOf(str) == []const u8);
+            try expect(@TypeOf(str) == []const u8);
             break :blk 1;
         },
         .c => 2,
         //if these are of the same type, they
         //may be inside the same capture group
         .a, .d => |num| blk: {
-            expect(@TypeOf(num) == u32);
+            try expect(@TypeOf(num) == u32);
             break :blk num * 2;
         },
     };
-    expect(x == 20);
+    try expect(x == 20);
 }
 
 test "for with pointer capture" {
     var data = [_]u8{ 1, 2, 3 };
     for (data) |*byte| byte.* += 1;
     data[2] += 10;
-    expect(mem.eql(u8, &data, &[_]u8{ 2, 3, 14 }));
+    try expect(mem.eql(u8, &data, &[_]u8{ 2, 3, 14 }));
 }
 
 test "inline for" {
@@ -177,7 +177,7 @@ test "inline for" {
     var sum: usize = 0;
     inline for (types) |T| sum += @sizeOf(T);
     std.log.warn("{d}", .{@sizeOf(i32)});
-    expect(sum == 10);
+    try expect(sum == 10);
 }
 
 test "anonymous struct literal" {
@@ -188,18 +188,18 @@ test "anonymous struct literal" {
         .x = 13,
         .y = 67,
     };
-    expect(pt.x == 13);
-    expect(pt.y == 67);
+    try expect(pt.x == 13);
+    try expect(pt.y == 67);
     var pt3: Point3 = .{
         .x = 14,
         .y = 68,
     };
-    expect(pt3.x == 14);
-    expect(pt3.y == 68);
+    try expect(pt3.x == 14);
+    try expect(pt3.y == 68);
 }
 
 test "fully anonymous struct" {
-    dump(.{
+    try dump(.{
         .int = @as(u32, 1234),
         .float = @as(f64, 12.34),
         .b = true,
@@ -207,12 +207,12 @@ test "fully anonymous struct" {
     });
 }
 
-fn dump(args: anytype) void {
-    expect(args.int == 1234);
-    expect(args.float == 12.34);
-    expect(args.b);
-    expect(args.s[0] == 'h');
-    expect(args.s[1] == 'i');
+fn dump(args: anytype) error.TestUnexpectedResult {
+    try expect(args.int == 1234);
+    try expect(args.float == 12.34);
+    try expect(args.b);
+    try expect(args.s[0] == 'h');
+    try expect(args.s[1] == 'i');
 }
 
 test "tuple" {
@@ -223,16 +223,16 @@ test "tuple" {
         "hi",
     } ++ .{false} ** 2;
 
-    expect(values[0] == 1234);
-    expect(values[4] == false);
+    try expect(values[0] == 1234);
+    try expect(values[4] == false);
     inline for (values) |v, i| {
         if (i != 2) continue;
-        expect(v);
+        try expect(v);
     }
-    expect(values.len == 6);
-    expect(values[4] == values[5]);
-    expect(values.@"4" == values[4]);
-    expect(values.@"3"[0] == 'h');
+    try expect(values.len == 6);
+    try expect(values[4] == values[5]);
+    try expect(values.@"4" == values[4]);
+    try expect(values.@"3"[0] == 'h');
 }
 
 test "sentinel terminated slicing" {
@@ -308,7 +308,7 @@ test "custom writer" {
     var bytes = MyByteList{};
     _ = try bytes.writer().write("Hello");
     _ = try bytes.writer().write(" Writer!");
-    expect(mem.eql(u8, bytes.items, "Hello Writer!"));
+    try expect(mem.eql(u8, bytes.items, "Hello Writer!"));
 }
 
 const Place = struct { lat: f32, long: f32 };
@@ -318,8 +318,8 @@ test "json parse" {
     );
     const x = try std.json.parse(Place, &stream, .{});
 
-    expect(x.lat == 40.684540);
-    expect(x.long == -74.401422);
+    try expect(x.lat == 40.684540);
+    try expect(x.long == -74.401422);
 }
 test "json stringify" {
     const x = Place{
@@ -334,7 +334,7 @@ test "json stringify" {
     const result = string.buffer[0..string.pos];
     std.log.warn("{s}", .{result});
 
-    expect(mem.eql(u8, result,
+    try expect(mem.eql(u8, result,
         \\{"lat":5.19976654e+01,"long":-7.40687012e-01}
     ));
 }

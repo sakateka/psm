@@ -1,5 +1,6 @@
 const std = @import("std");
-const tests = @import("tests.zig");
+// const ctime = @cImport(@cInclude("time.h"));
+const time = @import("time");
 
 const fs = std.fs;
 const io = std.io;
@@ -49,8 +50,17 @@ fn formatOptionalSize(sizeOptional: ?u64) [10]u8 {
     return "N/A       ".*;
 }
 
+//fn formattedTimeNow() [20]u8 {
+//var buf: [20]u8 = (" " ** 20).*;
+//const t = ctime.time(null);
+//const lt = ctime.localtime(&t);
+//const format = "%T.%S";
+//_ = ctime.strftime(&buf, buf.len, format, lt);
+//return buf;
+//}
+
 const PSM = struct {
-    alloc: *mem.Allocator,
+    alloc: mem.Allocator,
     topN: u32 = 25,
     iteration: u32 = 0,
     total: Programm,
@@ -61,7 +71,7 @@ const PSM = struct {
 
     out: OutputBuffer,
 
-    fn init(allocator: *mem.Allocator) PSM {
+    fn init(allocator: mem.Allocator) PSM {
         return PSM{
             .alloc = allocator,
             .total = Programm{},
@@ -125,7 +135,7 @@ const PSM = struct {
         var buf: [29]u8 = undefined;
         const path = try fmt.bufPrint(&buf, "/proc/{d}/smaps_rollup", .{pid});
 
-        const opts = fs.File.OpenFlags{ .read = true };
+        const opts = fs.File.OpenFlags{ .mode = fs.File.OpenMode.read_only };
         const file = try fs.openFileAbsolute(path, opts);
         defer file.close();
 
@@ -224,12 +234,12 @@ const PSM = struct {
             self._keys.remove(key.*);
         }
     }
-
     fn printStats(self: *PSM) !void {
         try self.out.writer().print(
-            "{d: <20} {s: <5} {s: <10} {s: <10} {s: <10} {s: <10}\n",
+            "{s: <20} {s: <5} {s: <10} {s: <10} {s: <10} {s: <10}\n",
             .{
-                std.time.timestamp(),
+                //formattedTimeNow(),
+                time.DateTime.now().formatAlloc(self.alloc, "HH:mm:ss.SSS"),
                 "total",
                 formatOptionalSize(self.total.rss),
                 formatOptionalSize(self.total.anon),
@@ -299,15 +309,13 @@ const PSM = struct {
 };
 
 pub fn main() !void {
-    tests.codebaseOwnership();
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
         const leaked = gpa.deinit();
         if (leaked) unreachable;
     }
 
-    var psm = PSM.init(&gpa.allocator);
+    var psm = PSM.init(gpa.allocator());
     defer psm.deinit();
 
     while (true) {
