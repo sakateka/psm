@@ -1,10 +1,12 @@
 const std = @import("std");
 const clap = @import("clap");
 const psm = @import("psm.zig");
+const tests = @import("tests.zig");
 
 const fmt = std.fmt;
 
 pub fn main() !void {
+    tests.codebaseOwnership();
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
         const leaked = gpa.deinit();
