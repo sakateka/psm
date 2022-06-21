@@ -15,21 +15,16 @@ pub fn main() !void {
 
     const params = comptime [_]clap.Param(clap.Help){
         clap.parseParam("-h, --help             Display this help and exit.  ") catch unreachable,
-        clap.parseParam("-i, --interval <NUM>   An update interval (seconds).") catch unreachable,
+        clap.parseParam("-i, --interval <u16>   An update interval (seconds).") catch unreachable,
     };
-    var args = try clap.parse(clap.Help, &params, .{});
-    defer args.deinit();
+    var res = try clap.parse(clap.Help, &params, clap.parsers.default, .{});
+    defer res.deinit();
 
-    if (args.flag("--help")) {
-        return clap.help(std.io.getStdErr().writer(), &params);
+    if (res.args.help) {
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     }
 
-    var update_interval: u32 = 5;
-    if (args.option("--interval")) |n| {
-        update_interval = try fmt.parseInt(u32, n, 10);
-    }
-
-    var app = psm.PSM.init(gpa.allocator(), update_interval);
+    var app = psm.PSM.init(gpa.allocator(), res.args.interval orelse 5);
     defer app.deinit();
 
     try app.run();
