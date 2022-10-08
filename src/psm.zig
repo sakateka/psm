@@ -184,8 +184,8 @@ pub const PSM = struct {
     }
 
     fn collectStats(self: *PSM) !void {
-        const opts = fs.Dir.OpenDirOptions{ .access_sub_paths = true, .iterate = true };
-        var dir = try fs.openDirAbsolute("/proc/", opts);
+        const opts = fs.Dir.OpenDirOptions{ .access_sub_paths = true };
+        var dir = try fs.openIterableDirAbsolute("/proc/", opts);
         defer dir.close();
 
         var iter = dir.iterate();
@@ -240,7 +240,7 @@ pub const PSM = struct {
             "{s: <20} {s: <5} {s: <10} {s: <10} {s: <10} {s: <10}\n",
             .{
                 //formattedTimeNow(),
-                time.DateTime.now().formatAlloc(self.alloc, "HH:mm:ss.SSS"),
+                try time.DateTime.now().formatAlloc(self.alloc, "HH:mm:ss.SSS"),
                 "total",
                 formatOptionalSize(self.total.rss),
                 formatOptionalSize(self.total.anon),

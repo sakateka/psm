@@ -81,7 +81,7 @@ test "simple union" {
     };
 
     var payload = Payload{ .int = 1234 };
-    std.log.warn("{s}", .{payload});
+    std.log.warn("{any}", .{payload});
 }
 
 test "switch on tagged union" {
@@ -123,7 +123,7 @@ test "while error union capture" {
     while (eventuallyErrorSequence()) |value| {
         sum += value;
     } else |err| {
-        std.log.warn("Error captured {s}", .{err});
+        std.log.warn("Error captured {!}", .{err});
         try expect(err == error.ReachedZero);
     }
 }
@@ -257,14 +257,14 @@ const test_allocator = std.testing.allocator;
 test "read until next line" {
     const mystdout = std.io.getStdOut();
     var buf = "Unknown";
-    const reader = std.io.fixedBufferStream(buf).reader();
+    var bufStream = std.io.fixedBufferStream(buf);
 
     try mystdout.writeAll(
         \\ Enter your name:
     );
 
     var buffer: [100]u8 = undefined;
-    const input = (try nextLine(reader, &buffer)).?;
+    const input = (try nextLine(bufStream.reader(), &buffer)).?;
     try mystdout.writer().print(
         "Your name is: \"{s}\"\n",
         .{input},
@@ -418,10 +418,7 @@ test "split iterator" {
 }
 
 test "iterator looping" {
-    var iter = (try std.fs.cwd().openDir(
-        ".",
-        .{ .iterate = true },
-    )).iterate();
+    var iter = (try std.fs.cwd().openIterableDir(".", .{})).iterate();
 
     var file_count: usize = 0;
     while (try iter.next()) |entry| {
