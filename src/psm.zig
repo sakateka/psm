@@ -6,7 +6,6 @@ const io = std.io;
 const mem = std.mem;
 const log = std.log;
 const fmt = std.fmt;
-const TokenIterator = mem.TokenIterator;
 
 const stdout = &io.getStdOut().writer();
 
@@ -144,39 +143,26 @@ pub const PSM = struct {
         const size = try file.readAll(&buffer);
         if (size == 0) return error.UnexpectedEof;
 
-        const start = mem.indexOf(u8, &buffer, "Pss:");
-        if (start == null) return error.UnexpectedEof;
-        var bufferPssSlice = buffer[start.? + 4 ..];
-
         var p = Programm{};
-        var iter = mem.tokenize(u8, bufferPssSlice, "\n ");
-        p.rss = try self.parseNextTokenAsU64(&iter);
-        self.assertNextSmapsField(&iter, "kB");
-
-        if (iter.next()) |token| {
-            if (mem.eql(u8, token, "Pss_Anon:")) {
-                p.anon = try self.parseNextTokenAsU64(&iter);
-                self.assertNextSmapsField(&iter, "kB");
-                self.assertNextSmapsField(&iter, "Pss_File:");
-                p.file = try self.parseNextTokenAsU64(&iter);
-                self.assertNextSmapsField(&iter, "kB");
-                self.assertNextSmapsField(&iter, "Pss_Shmem:");
-                p.shmem = try self.parseNextTokenAsU64(&iter);
-                self.assertNextSmapsField(&iter, "kB");
+        var smapIter = mem.tokenizeScalar(u8, &buffer, '\n');
+        while (smapIter.next()) |line| {
+            var lineIter = mem.tokenizeScalar(u8, line, ' ');
+            if (lineIter.next()) |key| {
+                if (mem.eql(u8, "Pss:", key)) {
+                    p.rss = try self.parseNextTokenAsU64(&lineIter);
+                } else if (mem.eql(u8, "Pss_Anon:", key)) {
+                    p.anon = try self.parseNextTokenAsU64(&lineIter);
+                } else if (mem.eql(u8, "Pss_File:", key)) {
+                    p.file = try self.parseNextTokenAsU64(&lineIter);
+                } else if (mem.eql(u8, "Pss_Shmem:", key)) {
+                    p.shmem = try self.parseNextTokenAsU64(&lineIter);
+                }
             }
         }
         return p;
     }
 
-    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator(u8, .any), field: []const u8) void {
-        const nextField = iter.next().?;
-        if (!mem.eql(u8, nextField, field)) {
-            log.err("expected '{s}', buf found '{s}'", .{ field, nextField });
-            unreachable;
-        }
-    }
-
-    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator(u8, .any)) !u64 {
+    fn parseNextTokenAsU64(_: *PSM, iter: *mem.TokenIterator(u8, .scalar)) !u64 {
         if (iter.next()) |token| {
             return try fmt.parseInt(u64, token, 10);
         }
