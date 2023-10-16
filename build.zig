@@ -1,27 +1,42 @@
 const std = @import("std");
-const deps = @import("./deps.zig");
 
-pub fn build(b: *std.build.Builder) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
-    // Standard release options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = b.standardReleaseOptions();
+    const exe = b.addExecutable(.{
+        .name = "psm",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
 
-    const exe = b.addExecutable("psm", "src/main.zig");
-    exe.setTarget(target);
-    //exe.linkLibC();
-    exe.setBuildMode(mode);
-    deps.addAllTo(exe);
-    exe.install();
+    const clap = b.dependency("clap", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
-    const exe_tests = b.addTest("src/tests.zig");
-    exe_tests.setBuildMode(mode);
+    exe.addModule("clap", clap.module("clap"));
 
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&exe_tests.step);
+    const extras = b.createModule(.{
+        .source_file = .{ .path = "vendor/zig-extras/lib.zig" },
+    });
+    exe.addModule("extras", extras);
+    const range = b.createModule(.{
+        .source_file = .{ .path = "vendor/zig-range/lib.zig" },
+    });
+    exe.addModule("range", range);
+    const time = b.createModule(.{
+        .source_file = .{ .path = "vendor/zig-time/time.zig" },
+        .dependencies = &.{
+            .{
+                .name = "extras",
+                .module = extras,
+            },
+        },
+    });
+    //try time.dependencies.put("extras", extras);
+    exe.addModule("time", time);
+    //exe.linkLibrary(clap.artifact("clap"));
+    b.installArtifact(exe);
 }

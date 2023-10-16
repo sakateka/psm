@@ -1,0 +1,25 @@
+// vim: ft=zig
+
+.{
+    .name = "psm",
+    .version = "0.0.1",
+    .paths = .{""},
+    .dependencies = .{
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.7.0.tar.gz",
+            .hash = "1220f48518ce22882e102255ed3bcdb7aeeb4891f50b2cdd3bd74b5b2e24d3149ba2",
+        },
+        //.zig_time = .{
+        //    .url = "https://github.com/nektro/zig-time/archive/12fad367a5282827aad7e12f0e9cd36f672c4010.tar.gz",
+        //    .hash = "122048c27478dc04099775153b81e46e04168e028f71cb9c15094e054d23e8e5e8b6",
+        //},
+        //.zig_range = .{
+        //    .url = "https://github.com/nektro/zig-range/archive/4b2f12808aa09be4b27a163efc424dd4e0415992.tar.gz",
+        //    .hash = "1220c940b336c4110a66589ad3b1d8717cc4e542fa3760ab22cb796ae25daa8cfec0",
+        //},
+        //.zig_extras = .{
+        //    .url = "https://github.com/nektro/zig-extras/archive/fc9553f55eee4bdf08a6cddb908eebc2860547b0.tar.gz",
+        //    .hash = "12203cc9c306e25cafb7ff99a317cb5a402f42dd257fbb26ef6126c7e009742d1712",
+        //},
+    },
+}

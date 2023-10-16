@@ -10,17 +10,18 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
         const leaked = gpa.deinit();
-        if (leaked) unreachable;
+        if (leaked == std.heap.Check.leak) unreachable;
     }
 
-    const params = comptime [_]clap.Param(clap.Help){
-        clap.parseParam("-h, --help             Display this help and exit.  ") catch unreachable,
-        clap.parseParam("-i, --interval <u16>   An update interval (seconds).") catch unreachable,
-    };
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help             Display this help and exit.
+        \\-i, --interval <u16>   An update interval (seconds).
+        \\
+    );
     var res = try clap.parse(clap.Help, &params, clap.parsers.default, .{});
     defer res.deinit();
 
-    if (res.args.help) {
+    if (res.args.help != 0) {
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     }
 

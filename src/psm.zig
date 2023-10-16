@@ -168,7 +168,7 @@ pub const PSM = struct {
         return p;
     }
 
-    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator(u8), field: []const u8) void {
+    fn assertNextSmapsField(_: *PSM, iter: *TokenIterator(u8, .any), field: []const u8) void {
         const nextField = iter.next().?;
         if (!mem.eql(u8, nextField, field)) {
             log.err("expected '{s}', buf found '{s}'", .{ field, nextField });
@@ -176,7 +176,7 @@ pub const PSM = struct {
         }
     }
 
-    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator(u8)) !u64 {
+    fn parseNextTokenAsU64(_: *PSM, iter: *TokenIterator(u8, .any)) !u64 {
         if (iter.next()) |token| {
             return try fmt.parseInt(u64, token, 10);
         }
@@ -190,7 +190,7 @@ pub const PSM = struct {
 
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
-            if (!(entry.kind == .Directory)) continue;
+            if (!(entry.kind == .directory)) continue;
             const pid = fmt.parseInt(u32, entry.name, 10) catch continue;
 
             self.addProcess(pid) catch |err| {
@@ -227,7 +227,7 @@ pub const PSM = struct {
                 try self._entries.append(entry);
             }
         }
-        std.sort.sort(ProgrammMap.Entry, self._entries.items, {}, orderEntry);
+        std.sort.heap(ProgrammMap.Entry, self._entries.items, {}, orderEntry);
 
         var iter = self._obsolete.iterator();
         while (iter.next()) |key| {
@@ -255,13 +255,13 @@ pub const PSM = struct {
 
         const nameLen = 18;
 
-        const n = std.math.min(self.topN, self._entries.items.len);
+        const n = @min(self.topN, self._entries.items.len);
         var idx: usize = 0;
         while (idx < n) : (idx += 1) {
             const v = self._entries.items[idx].value_ptr.curr;
             const k = self._entries.items[idx].key_ptr.*;
 
-            const nameEnd = std.math.min(k.len, nameLen);
+            const nameEnd = @min(k.len, nameLen);
             const nameEndChar: u8 = if (k.len > (nameEnd + 1)) '~' else ' ';
 
             var nameBuf: [nameLen + 1]u8 = undefined;

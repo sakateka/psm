@@ -103,8 +103,8 @@ test "well defined overflow" {
 
 test "int-float conversion" {
     const a: i32 = 9;
-    const b = @intToFloat(f32, a);
-    const c = @floatToInt(i32, b);
+    const b = @as(f32, a);
+    const c = @as(i32, b);
     try expect(c == a);
 }
 
@@ -225,7 +225,7 @@ test "tuple" {
 
     try expect(values[0] == 1234);
     try expect(values[4] == false);
-    inline for (values) |v, i| {
+    inline for (values, 0..) |v, i| {
         if (i != 2) continue;
         try expect(v);
     }
@@ -370,7 +370,7 @@ test "stack" {
     );
     defer pairs.deinit();
 
-    for (string) |char, i| {
+    for (string, 0..) |char, i| {
         if (char == '(') try stack.append(i);
         if (char == ')')
             try pairs.append(.{
@@ -388,7 +388,7 @@ test "stack" {
     //   std.log.warn("items {any}, expected {any}", .{ items, expected });
     //   expect(mem.eql(Pair, items[0..3], expected[0..3]));
 
-    for (pairs.items) |pair, i| {
+    for (pairs.items, 0..) |pair, i| {
         try expect(std.meta.eql(pair, switch (i) {
             0 => Pair{ .open = 1, .close = 2 },
             1 => Pair{ .open = 3, .close = 4 },
