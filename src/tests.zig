@@ -167,7 +167,7 @@ test "switch capture" {
 
 test "for with pointer capture" {
     var data = [_]u8{ 1, 2, 3 };
-    for (data) |*byte| byte.* += 1;
+    for (&data) |*byte| byte.* += 1;
     data[2] += 10;
     try expect(mem.eql(u8, &data, &[_]u8{ 2, 3, 14 }));
 }
@@ -313,13 +313,16 @@ test "custom writer" {
 
 const Place = struct { lat: f32, long: f32 };
 test "json parse" {
-    var stream = std.json.TokenStream.init(
+    var stream = std.json.Scanner.initCompleteInput(std.testing.allocator,
         \\{ "lat": 40.684540, "long": -74.401422 }
     );
-    const x = try std.json.parse(Place, &stream, .{});
+    defer stream.deinit();
+    const x = try std.json.parseFromTokenSource(Place, std.testing.allocator, &stream, .{});
+    defer x.deinit();
+    const val = x.value;
 
-    try expect(x.lat == 40.684540);
-    try expect(x.long == -74.401422);
+    try expect(val.lat == 40.684540);
+    try expect(val.long == -74.401422);
 }
 test "json stringify" {
     const x = Place{
@@ -335,7 +338,7 @@ test "json stringify" {
     std.log.warn("{s}", .{result});
 
     try expect(mem.eql(u8, result,
-        \\{"lat":5.19976654e+01,"long":-7.40687012e-01}
+        \\{"lat":5.199766540527344e+01,"long":-7.406870126724243e-01}
     ));
 }
 
@@ -400,9 +403,9 @@ test "stack" {
 
 test "sorting" {
     var data = [_]u8{ 10, 240, 0, 0, 10, 5 };
-    std.sort.sort(u8, &data, {}, comptime std.sort.asc(u8));
+    std.sort.pdq(u8, &data, {}, comptime std.sort.asc(u8));
     try expect(mem.eql(u8, &data, &[_]u8{ 0, 0, 5, 10, 10, 240 }));
-    std.sort.sort(u8, &data, {}, comptime std.sort.desc(u8));
+    std.sort.insertion(u8, &data, {}, comptime std.sort.desc(u8));
     try expect(mem.eql(u8, &data, &[_]u8{ 240, 10, 10, 5, 0, 0 }));
 }
 
@@ -422,7 +425,7 @@ test "iterator looping" {
 
     var file_count: usize = 0;
     while (try iter.next()) |entry| {
-        if (entry.kind == .File) file_count += 1;
+        if (entry.kind == .file) file_count += 1;
     }
 
     try expect(file_count > 0);
